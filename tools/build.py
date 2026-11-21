@@ -2,6 +2,7 @@
 import os
 import sys
 import secrets
+import shutil
 import subprocess
 import zipfile
 from pathlib import Path
@@ -18,15 +19,16 @@ def run(*args):
     subprocess.run([str(a) for a in args],check=True,cwd=ROOT)
 
 BUILD.mkdir(exist_ok=True)
-(BUILD/'classes').mkdir(exist_ok=True)
-(BUILD/'dex').mkdir(exist_ok=True)
+for name in ('classes','dex'):
+    shutil.rmtree(BUILD/name,ignore_errors=True)
+    (BUILD/name).mkdir()
 run(TOOLS/'aapt2','compile','--dir',ROOT/'res','-o',BUILD/'resources.zip')
 manifest=ROOT/'AndroidManifest.xml'
 if '--debug' in sys.argv:
     manifest=BUILD/'test-manifest.xml'
     manifest.write_text((ROOT/'AndroidManifest.xml').read_text().replace('<application ', '<application android:debuggable="true" '))
 run(TOOLS/'aapt2','link','-o',BUILD/'resources.apk','--manifest',manifest,
-    '-I',ANDROID,'-A',ROOT/'assets',BUILD/'resources.zip','--min-sdk-version','26','--target-sdk-version','35')
+    '-I',ANDROID,BUILD/'resources.zip','--min-sdk-version','26','--target-sdk-version','35')
 run('javac','--release','8','-classpath',ANDROID,'-d',BUILD/'classes',*sorted((ROOT/'src').rglob('*.java')))
 run(TOOLS/'d8','--lib',ANDROID,'--min-api','26','--output',BUILD/'dex',*sorted((BUILD/'classes').rglob('*.class')))
 unsigned=BUILD/'unsigned.apk'
