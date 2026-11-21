@@ -21,6 +21,12 @@ import org.json.*;
 public class ReceiverService extends Service {
  public static volatile String status="Receiver stopped";
  public static volatile boolean running=false;
+ public static volatile long lastContact=0,bytesReceived=0,transferSize=0,transferStarted=0;
+ public static volatile String desktop="",transferFile="",transferPhase="";
+ public static volatile boolean transferring=false;
+ static final java.util.concurrent.atomic.AtomicInteger activeRequests=new java.util.concurrent.atomic.AtomicInteger();
+ static void transferStatus(String text){status=text;if(text.startsWith("Verifying"))transferPhase="Verifying SD-card copy";else if(text.startsWith("Installed"))transferPhase="Complete — verified on card";else if(text.startsWith("Already installed"))transferPhase="Already installed — verified";else if(text.startsWith("Checking existing"))transferPhase="Checking existing file";}
+
  static final int PORT=53318;
  volatile boolean shuttingDown=false;
  SSLServerSocket server;final Set<Socket> sockets=Collections.synchronizedSet(new HashSet<Socket>());
@@ -65,20 +71,24 @@ public class ReceiverService extends Service {
  static String line(InputStream in)throws IOException {ByteArrayOutputStream out=new ByteArrayOutputStream();for(int i=0;i<8192;i++){int b=in.read();if(b<0)throw new EOFException();if(b==10)return out.toString("UTF-8").replace("\r","");out.write(b);}throw new IOException("Header too long");}
  void reply(OutputStream out,int code,JSONObject body)throws Exception {byte[] data=body.toString().getBytes("UTF-8");out.write(("HTTP/1.1 "+code+" Result\r\nContent-Type: application/json\r\nContent-Length: "+data.length+"\r\nConnection: close\r\n\r\n").getBytes("UTF-8"));out.write(data);out.flush();}
  void handle(Socket socket){
-  boolean held=false;
+  boolean held=false,authenticated=false,upload=false;
   try(Socket s=socket){s.setSoTimeout(30000);InputStream in=new BufferedInputStream(s.getInputStream(),65536);OutputStream out=s.getOutputStream();String[] request=line(in).split(" ");if(request.length!=3)throw new IOException("Bad request");Map<String,String> headers=new HashMap<>();int total=0;String row;while(!(row=line(in)).isEmpty()){total+=row.length();if(total>16384)throw new IOException("Headers too large");int split=row.indexOf(':');if(split<0)throw new IOException("Invalid header");String name=row.substring(0,split).trim().toLowerCase(Locale.ROOT);if(headers.containsKey(name))throw new IOException("Duplicate header");headers.put(name,row.substring(split+1).trim());}
    if(!MessageDigest.isEqual(("Bearer "+token(this)).getBytes("UTF-8"),headers.getOrDefault("authorization","").getBytes("UTF-8"))){reply(out,401,new JSONObject().put("error","Pair this device first"));return;}
+   authenticated=true;activeRequests.incrementAndGet();lastContact=System.currentTimeMillis();desktop=s.getInetAddress().getHostAddress();
+   wake.acquire(6*60*60*1000L);held=true;
    Uri uri=Uri.parse(request[1]);String route=uri.getPath();
    try {
     if(request[0].equals("GET")&&route.equals("/inventory")){reply(out,200,new JSONObject().put("items",store.inventory()).put("connected",true));}
     else if(request[0].equals("GET")&&route.equals("/check")){reply(out,200,store.check(uri.getQueryParameter("path"),uri.getQueryParameter("sha256"),Long.parseLong(uri.getQueryParameter("size"))));}
     else if(request[0].equals("POST")&&route.equals("/upload")){
      if(headers.containsKey("transfer-encoding"))throw new IOException("Use Content-Length");long size=Long.parseLong(headers.getOrDefault("content-length","-1"));if(size<=0)throw new IOException("Invalid file size");String sha=uri.getQueryParameter("sha256");if(sha==null||!sha.matches("[0-9a-f]{64}"))throw new IOException("Checksum required");
-     wake.acquire(6*60*60*1000L);held=true;
-     reply(out,200,store.install(uri.getQueryParameter("path"),in,size,sha,text->status=text));
+     synchronized(ReceiverService.class){if(transferring)throw new IOException("Another transfer is active; retry after it finishes");transferring=true;}
+     upload=true;transferFile=uri.getQueryParameter("path");transferSize=size;bytesReceived=0;transferStarted=System.currentTimeMillis();transferPhase="Receiving";
+     InputStream counted=new FilterInputStream(in){public int read(byte[] b,int off,int len)throws IOException{int n=in.read(b,off,len);if(n>0)bytesReceived+=n;return n;}public int read()throws IOException{int b=in.read();if(b>=0)bytesReceived++;return b;}};
+     reply(out,200,store.install(transferFile,counted,size,sha,ReceiverService::transferStatus));
     }else reply(out,404,new JSONObject().put("error","Unknown route"));
-   }catch(Exception e){status="Transfer failed: "+e.getMessage();reply(out,409,new JSONObject().put("error",e.getMessage()==null?"Transfer failed":e.getMessage()));}
-  }catch(Exception e){status="Connection ended: "+e.getMessage();}finally{if(held&&wake.isHeld())wake.release();sockets.remove(socket);}
+   }catch(Exception e){status="Transfer failed: "+e.getMessage();if(upload)transferPhase=status;reply(out,409,new JSONObject().put("error",e.getMessage()==null?"Transfer failed":e.getMessage()));}
+  }catch(Exception e){status="Connection ended: "+e.getMessage();if(upload)transferPhase="Interrupted — retry from the computer";}finally{if(upload)transferring=false;if(authenticated){lastContact=System.currentTimeMillis();activeRequests.decrementAndGet();}if(held&&wake.isHeld())wake.release();sockets.remove(socket);}
  }
  void importFile(Uri uri,String folder)throws Exception {
   if(folder==null)throw new IOException("Select a console folder");String name="";try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst())name=c.getString(0);}if(name.isEmpty())throw new IOException("Unknown filename");
@@ -94,6 +104,6 @@ public class ReceiverService extends Service {
   }finally{if(wake.isHeld())wake.release();}
  }
  public void onTimeout(int startId,int fgsType){status="Receiver timed out. Open the app and start it again.";stopSelf();}
- public void onDestroy(){shuttingDown=true;running=false;try{if(server!=null)server.close();}catch(Exception ignored){}synchronized(sockets){for(Socket s:sockets)try{s.close();}catch(Exception ignored){}}if(clients!=null)clients.shutdownNow();if(wake!=null&&wake.isHeld())wake.release();super.onDestroy();}
+ public void onDestroy(){shuttingDown=true;running=false;lastContact=0;try{if(server!=null)server.close();}catch(Exception ignored){}synchronized(sockets){for(Socket s:sockets)try{s.close();}catch(Exception ignored){}}if(clients!=null)clients.shutdownNow();if(wake!=null&&wake.isHeld())wake.release();super.onDestroy();}
  public IBinder onBind(Intent i){return null;}
 }

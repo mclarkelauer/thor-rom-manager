@@ -87,3 +87,11 @@ duplicate-safe retry, current inventory, invalid-path rejection, bad-checksum
 rejection, interrupted-file cleanup, and local ZIP import. The desktop queue-to-
 Android integration and browser regression checks also passed. A physical AYN
 Thor and Android 15/16 have not yet been tested.
+
+### Keeping transfers awake
+
+Version 1.0.1 enables **Keep screen awake while receiver is on** by default. Leave Thor ROM Manager visible while transferring; the screen stays awake between files and during checksum verification. Turn the option off or stop the receiver to restore normal screen timeout. The preference survives app restarts. Android releases screen protection when the app is in the background; manual power-button sleep or closing the lid is not overridden. CPU wake protection also covers authenticated inventory and checksum requests.
+
+### Connection and transfer dashboard
+
+The main screen shows setup instructions until the computer contacts the receiver, then its address and transfer activity. The connection indicator reflects active authenticated requests or contact within the last 45 seconds, not a permanent socket connection. Transfers show filename, received/total MiB, average receiving speed, SD verification, completion, or interruption. Open **Options** for receiver controls, pairing, folder access, keep-awake, and LocalSend imports.
