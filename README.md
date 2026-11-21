@@ -95,3 +95,7 @@ Version 1.0.1 enables **Keep screen awake while receiver is on** by default. Lea
 ### Connection and transfer dashboard
 
 The main screen shows setup instructions until the computer contacts the receiver, then its address and transfer activity. The connection indicator reflects active authenticated requests or contact within the last 45 seconds, not a permanent socket connection. Transfers show filename, received/total MiB, average receiving speed, SD verification, completion, or interruption. Open **Options** for receiver controls, pairing, folder access, keep-awake, and LocalSend imports.
+
+### Interface (1.0.2)
+
+Use the bottom **Transfer**, **Library**, and **Options** tabs. Wide screens show connection and transfer cards side by side; narrow screens stack them. The circular indicator measures bytes received; the separate verification phase confirms the SD copy before showing completion. Library rows are recycled while scrolling, with search across full file paths. Keep-awake behavior is unchanged and works across all three tabs while the app remains visible.
